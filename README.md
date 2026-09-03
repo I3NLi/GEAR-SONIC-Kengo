@@ -1,511 +1,339 @@
-<div align="center">
+# GEAR-SONIC-Kengo
 
-  <img src="media/groot_wbc.png" width="800" alt="GEAR SONIC Header">
+An unofficial research adaptation of NVIDIA
+[GR00T Whole-Body Control](https://github.com/NVlabs/GR00T-WholeBodyControl)
+and [GEAR-SONIC](https://nvlabs.github.io/GEAR-SONIC/) for the 23-DoF
+Galaxea Kengo embodiment.
 
-  <!-- --- -->
-  
-  
-</div>
+> 中文：本仓库提供 Kengo 的动作转换与 SONIC 过滤、tracker/controller
+> 训练、最佳 checkpoint 选择、单体 ONNX 导出和 MuJoCo sim2sim 链路。
+> 机器人资产、动作数据、模型和测试视频不随公开代码分发；目前也不包含
+> 可直接驱动 Kengo 真机的传输与安全层。
 
-<div align="center">
+[![Repository](https://img.shields.io/badge/repository-public-brightgreen.svg)](https://github.com/I3NLi/GEAR-SONIC-Kengo)
+[![Robot](https://img.shields.io/badge/Kengo-23--DoF-blue.svg)](#implemented-scope)
+[![Isaac Lab](https://img.shields.io/badge/Isaac%20Lab-2.3.x-orange.svg)](https://github.com/isaac-sim/IsaacLab)
+[![License](https://img.shields.io/badge/source-Apache--2.0-76B900.svg)](LICENSE)
 
-[![License](https://img.shields.io/badge/License-Apache%202.0-76B900.svg)](LICENSE)
-[![IsaacLab](https://img.shields.io/badge/IsaacLab-2.3.2-orange.svg)](https://github.com/isaac-sim/IsaacLab/releases/tag/v2.3.2)
-[![Documentation](https://img.shields.io/badge/docs-GitHub%20Pages-76B900.svg)](https://nvlabs.github.io/GR00T-WholeBodyControl/)
-[![Demo](https://img.shields.io/badge/Live%20Demo-GEAR--SONIC-blue.svg)](https://nvlabs.github.io/GEAR-SONIC/demo.html)
+## Results first
 
-</div>
+The latest locally validated policy is the private step-25,450 checkpoint
+(training `Mean rewards = 20.1756`) exported as one 55,535,372-byte FP32 ONNX
+policy. Its interface is `obs_dict [1, 1270] -> action [1, 23]`.
 
----
+Full-reference MuJoCo results below compare the earlier step-7,400 policy with
+step 25,450. Lower RMSE is better. The evaluation motions and videos are
+separate, access-controlled artifacts and are intentionally not committed here.
 
+| Evaluation length | Step 7,400 | Step 25,450 | Joint RMSE (rad) | Root position RMSE (m) | Root orientation RMSE (rad) |
+|---:|---|---|---:|---:|---:|
+| 51.84 s | completed | completed | 0.1581 -> **0.1388** | 0.6332 -> **0.4283** | **0.1534** -> 0.1535 |
+| 64.06 s | completed | completed | 0.1357 -> **0.1040** | **0.3195** -> 0.3214 | 0.1194 -> **0.0686** |
+| 108.22 s stress case | fell at 41.585 s | fell at **46.815 s** | 0.5394 -> **0.5164** | 1.8580 -> **1.0512** | **1.5943** -> 1.7124 |
 
+On these three selected clips, the later checkpoint improves most tracking
+measures and extends survival on the stress case by 5.23 seconds, but it does
+**not** solve that motion. Stress-case RMSE includes the post-fall frames because
+full-reference evaluation continues to the end. These are simulation
+measurements, not claims of real-robot stability or safety.
 
+Additional validated observations for this handoff:
 
-# GR00T-WholeBodyControl
+- motion audit: 2,489 discovered -> 2,141 selected, with 233 quality failures
+  and 115 additional SONIC filename-keyword exclusions;
+- selected training data: 658,528 source frames, approximately 5.919 hours;
+- measured 8 x RTX 4090 training throughput: approximately 282k timesteps/s
+  after warm-up at 4,096 environments per GPU (32,768 total);
+- measured memory in that short host-specific run: approximately 15.9 GiB per
+  24 GiB GPU;
+- Kengo asset contract: 23 actuated joints, 27 meshes, MuJoCo
+  `(nq, nv, nu, nbody, nsensor) = (30, 29, 23, 25, 3)`;
+- code/contract validation: 48 tests passed, ONNX checker and finite
+  ONNX Runtime inference passed, and the dedicated sim2sim smoke test passed.
 
-This is the codebase for the **GR00T Whole-Body Control (WBC)** projects. It hosts model checkpoints and scripts for training, evaluating, and deploying advanced whole-body controllers for humanoid robots. We currently support:
+Training throughput and memory figures are measurements from one host, not
+portable capacity guarantees.
 
-- **Decoupled WBC**: the decoupled controller (RL for lower body, and IK for upper body) used in NVIDIA GR00T [N1.5](https://research.nvidia.com/labs/gear/gr00t-n1_5/) and [N1.6](https://research.nvidia.com/labs/gear/gr00t-n1_6/) models;
-- **GEAR-SONIC Series**: our latest iteration of generalist humanoid whole-body controllers (see our [whitepaper](https://nvlabs.github.io/GEAR-SONIC/));
-- **MotionBricks**: a real-time latent generative model for interactive motion control in animation and robotics (see the [project page](https://nvlabs.github.io/motionbricks/)).
+## Implemented scope
 
-## Kengo fork quick path
+```text
+authorized retargeted NPZ + quality report
+                    |
+                    v
+deterministic conversion + SONIC filtering + manifest
+                    |
+                    v
+       Kengo 23-DoF SONIC PPO training
+                    |
+                    v
+      hourly polling / one best checkpoint
+                    |
+                    v
+      one combined 1270 -> 23 FP32 ONNX
+                    |
+                    v
+      dedicated Kengo MuJoCo sim2sim
+```
 
-This checkout adds a 23-DoF Galaxea Kengo SONIC training, export, and MuJoCo
-sim2sim path.  Kengo is selected explicitly by
-`manager/universal_token/all_modes/sonic_kengo`; the upstream Unitree G1/H2
-assets and examples remain available as separate compatibility branches.
+| Capability | Status |
+|---|---|
+| Kengo joint/body/order contract | Implemented and tested |
+| Retargeted NPZ conversion | Implemented |
+| Quality filtering and 40-keyword SONIC filter | Implemented and manifested |
+| Multi-GPU tracker/controller training | Implemented; validated launcher targets 8 GPUs |
+| Hourly best-checkpoint polling | Implemented; retains one full best checkpoint |
+| Combined Kengo ONNX export | Implemented, `[1,1270] -> [1,23]` |
+| Full-length MuJoCo sim2sim, metrics and recording | Implemented |
+| Planner training for Kengo | Not available in the public upstream release |
+| Native Kengo hardware transport and safety layer | **Not implemented** |
 
-Kengo robot descriptions are not stored in this parent repository. Authorized
-users must initialize the exact private asset commit pinned as a submodule:
+## Repository and artifact boundary
+
+| Layer | Visibility | Contents |
+|---|---|---|
+| This parent repository | Public | Source, configuration, tests, documentation and one pinned gitlink |
+| `I3NLi/kengo-robot-assets` | Private/restricted | Kengo URDF, MJCF, 27 STL meshes and their asset contract |
+| Motion inputs and generated motion library | External/restricted | Retargeted NPZ, quality CSV, filtered PKL and manifest |
+| Training/evaluation artifacts | External | PT/optimizer state, resolved config, ONNX, metrics and videos |
+
+The private asset source states `Do Not distribute`. Access to the private
+repository is an access-control mechanism, not a license grant. Do not expose
+its contents through a public fork, Release, package, container layer, CI
+artifact/cache, object store or experiment tracker. See
+[KENGO_ASSET_BOUNDARY.md](KENGO_ASSET_BOUNDARY.md) for the complete boundary.
+
+## Clone
+
+Clone the public source without automatically downloading the upstream
+repository's large Git LFS objects:
+
+```bash
+GIT_LFS_SKIP_SMUDGE=1 git clone --filter=blob:none \
+  https://github.com/I3NLi/GEAR-SONIC-Kengo.git
+cd GEAR-SONIC-Kengo
+```
+
+Pull individual upstream LFS paths only if you need them. The Kengo path does
+not require downloading every upstream checkpoint and media object.
+
+Authorized asset users must also have GitHub SSH access to the private asset
+repository:
 
 ```bash
 git submodule sync --recursive
 git submodule update --init --recursive \
   external_dependencies/kengo_robot_description
-python gear_sonic/scripts/stage_kengo_assets.py
+python3 gear_sonic/scripts/stage_kengo_assets.py
 ```
 
-The asset source carries a `Do Not distribute` restriction. Keep the submodule
-private and do not expose it through public forks, releases, packages, or CI
-artifacts. See [KENGO_ASSET_BOUNDARY.md](KENGO_ASSET_BOUNDARY.md) for repository,
-data/model, licensing, update, and sim2real boundaries.
+Submodule initialization failing for an unauthorized public user is expected.
+The parent pins asset tag `kengo-with-fist-v1.0.0` at commit
+`6772bd3e8db9ad89cc3ee17c2dbbff7fe9f52771`; the validator fails closed if
+the checkout, gitlink, lock file or asset contract disagree.
+
+## Training environment
+
+The validated training path targets Ubuntu 22.04+, Python 3.11, CUDA 12.x,
+Isaac Sim 5.1 and Isaac Lab 2.3.x. Install Isaac Lab first using its
+[official installation guide](https://isaac-sim.github.io/IsaacLab/main/source/setup/installation/index.html)
+and provision that environment as `./.venv/bin/python`, which the launch scripts
+use explicitly.
 
 ```bash
-# Train on all configured GPUs using the filtered, redirected Kengo motions.
-./gear_sonic/scripts/launch_kengo_training.sh 4096 100000 full8gpu_sonic_filtered
+./.venv/bin/python -m pip install \
+  -c gear_sonic/constraints-kengo-isaacsim-5.1.txt \
+  -e "gear_sonic[training]" \
+  pytest
 
-# Export exactly one combined policy.  The output is *_kengo.onnx.
-./gear_sonic/scripts/export_kengo_onnx.sh /path/to/best_so_far.pt
+./.venv/bin/python check_environment.py --training --robot kengo
+```
 
-# Run the combined policy locally in the dedicated Kengo MuJoCo bridge.
+For the full upstream environment procedure, see
+[Installation (Training)](docs/source/getting_started/installation_training.md).
+
+## Prepare filtered Kengo motions
+
+The input path and quality report must be supplied from authorized storage.
+The converter keeps `PASS` and `WARN`, rejects `FAIL`, applies the 40 public
+SONIC filename keywords by default, and writes a schema-2 audit manifest beside
+the output PKL.
+
+```bash
+./.venv/bin/python gear_sonic/data_process/convert_kengo_npz_to_motion_lib.py \
+  --input /path/to/kengo-retargeted-raw \
+  --quality-csv /path/to/per_file_quality.csv \
+  --mjcf external_dependencies/kengo_robot_description/xml/kengo_with_fist.xml \
+  --output data/kengo_motion_lib/robot_filtered/kengo_sonic_filtered.pkl
+```
+
+Keep the generated
+`data/kengo_motion_lib/robot_filtered/kengo_sonic_filtered.pkl.manifest.json`
+with the PKL. The 8-GPU launcher requires both files.
+
+## Validate
+
+```bash
+./.venv/bin/python gear_sonic/scripts/stage_kengo_assets.py
+./.venv/bin/python gear_sonic/scripts/validate_kengo_setup.py
+./.venv/bin/python -m pytest -q \
+  gear_sonic/tests/test_kengo_asset_submodule.py \
+  gear_sonic/tests/test_kengo_contract.py \
+  gear_sonic/tests/test_kengo_npz_conversion.py \
+  gear_sonic/tests/test_kengo_sonic_sim2sim.py \
+  gear_sonic/tests/test_backup_best_checkpoints.py \
+  gear_sonic/tests/test_export_contract.py \
+  gear_sonic/tests/test_im_eval_body_subsets.py \
+  gear_sonic/tests/test_render_kengo_reference_video.py
+```
+
+The asset validator and the combined data validator are both necessary. Unit
+tests using synthetic fixtures do not replace loading the pinned URDF/MJCF and
+real mesh bundle.
+
+## Train on the validated 8-GPU layout
+
+```bash
+bash gear_sonic/scripts/launch_kengo_training.sh \
+  4096 100000 full8gpu_sonic_filtered
+
+bash gear_sonic/scripts/status_kengo_training.sh 100
+bash gear_sonic/scripts/launch_kengo_checkpoint_backup.sh
+```
+
+`4096` is the number of environments **per GPU**. This launcher is fixed to
+CUDA devices 0-7 and starts eight processes; adapt and revalidate it before
+using a different topology. Runtime logs go to `run_logs/`, while Hydra runs
+and checkpoints are written below
+`logs_rl/TRL_Kengo_Track/manager/universal_token/all_modes/`.
+
+The backup service performs one immediate check and then polls once per hour.
+It does not watch the directory continuously and does not accumulate hourly
+checkpoint copies. It retains one `best_so_far.pt`, small metadata and an
+improvement history under `checkpoint_backups/hourly_best/`.
+
+## Export one Kengo ONNX
+
+For a PT stored with the resolved `config.yaml` from the same training run:
+
+```bash
+bash gear_sonic/scripts/export_kengo_onnx.sh \
+  /path/to/run/model_step_025450.pt
+```
+
+For the checkpoint selected by the hourly-best service, use its provenance-aware
+entry point:
+
+```bash
+bash gear_sonic/scripts/export_latest_kengo_best_onnx.sh
+```
+
+The latter binds the original run configuration and validates the resulting
+ONNX with the ONNX checker plus a finite ONNX Runtime inference. Its canonical
+output is
+`sim2sim_exports/kengo_best_step_<step>/model_step_<step>_kengo.onnx`.
+
+The ONNX is inference-only. Continuing PPO training requires the PT optimizer
+state, matching resolved config and complete run provenance.
+
+## Run full-length MuJoCo sim2sim
+
+A lightweight simulation environment can be installed separately from Isaac
+Lab:
+
+```bash
+python3 -m venv .venv-sim
+source .venv-sim/bin/activate
+python -m pip install -e "gear_sonic[sim]"
+python -m pip install "mujoco>=3.2,<4" "onnxruntime>=1.18,<2" imageio-ffmpeg
+```
+
+Run every reference frame, retain failure information, write metrics and record
+the simulation:
+
+```bash
 python gear_sonic/scripts/run_kengo_sonic_sim2sim.py \
-  --policy /path/to/model_step_<step>_kengo.onnx \
-  --headless --no-real-time --max-sim-seconds 4
+  --policy /path/to/model_step_025450_kengo.onnx \
+  --motion /path/to/kengo_ref.npz \
+  --xml external_dependencies/kengo_robot_description/xml/kengo_with_fist.xml \
+  --headless --no-real-time --full-reference \
+  --metrics-json /artifact/path/metrics.json \
+  --video /artifact/path/sim2sim.mp4
 ```
 
-The older `gear_sonic_deploy`, Unitree DDS, VLA/teleoperation, and
-`run_sim_loop.py` paths below are upstream G1-specific implementations.  They
-must not be used to command Kengo hardware: a real Kengo deployment still
-requires its 23-motor transport and safety adapter.  The dedicated Kengo
-sim2sim script does not import those components.  See [KENGO_TRAINING.md](KENGO_TRAINING.md)
-for the validated data and training contract.
-
-## News
-
-- **[2026-07-23]** **SONIC v1.1 checkpoint** — released a robot-heading-normalized SONIC controller trained with wrist-pose augmentation for whole-body teleoperation and SONIC-backed VLA execution. See the [Model Card](#model-card) and [Download Models](https://nvlabs.github.io/GR00T-WholeBodyControl/getting_started/download_models.html#sonic-v11-checkpoint).
-- **[06/16]** **Isaac Teleop Setup (CloudXR / DeviceIO, in-process)** — added bring-up docs for the in-process CloudXR path via `isaacteleop[cloudxr]`, with no separate publisher container. See [Isaac Teleop Setup](https://nvlabs.github.io/GR00T-WholeBodyControl/tutorials/isaac_teleop_publisher_setup.html).
-- **[2026-06-16]** **Low-latency teleoperation checkpoint** — released a SONIC checkpoint with 4-frame SMPL reference lookahead for more responsive whole-body teleoperation. See the [Model Card](#model-card), [Download Models](https://nvlabs.github.io/GR00T-WholeBodyControl/getting_started/download_models.html#low-latency-teleoperation-checkpoint), and [VLA Inference](https://nvlabs.github.io/GR00T-WholeBodyControl/tutorials/vla_inference.html#low-latency-teleoperation-checkpoint).
-- **[2026-05-07]** 🤖 **End-to-end VLA workflow on G1** — collect teleop data, fine-tune Isaac-GR00T N1.7, and deploy with SONIC whole-body control. See [Data Collection](https://nvlabs.github.io/GR00T-WholeBodyControl/tutorials/data_collection.html), [VLA Workflow](https://nvlabs.github.io/GR00T-WholeBodyControl/tutorials/vla_workflow.html), and [VLA Inference](https://nvlabs.github.io/GR00T-WholeBodyControl/tutorials/vla_inference.html).
-- **[2026-04-27]** 🧩 **MotionBricks preview** — interactive G1 demo, pretrained checkpoints (VQVAE · pose · root), synthetic training code, and motion-representation docs. See [`motionbricks/`](motionbricks/) and the [project page](https://nvlabs.github.io/motionbricks/).
-- **[2026-04-14]** 🌐 **[Live web demo](https://nvlabs.github.io/GEAR-SONIC/demo.html)** — try SONIC interactively in your browser. Features [Kimodo](https://github.com/nv-tlabs/kimodo) text-to-motion generation.
-- **[2026-04-10]** 🚀 Released **SONIC training code and checkpoint** on [HuggingFace](https://huggingface.co/nvidia/GEAR-SONIC). Train from scratch or finetune. **Additional embodiment support** and **VLA data collection pipeline**. See [Training Guide](https://nvlabs.github.io/GR00T-WholeBodyControl/user_guide/training.html).
-- **[2026-03-24]** 🔧 C++ inference stack update: motor error monitoring, TTS alerts, ZMQ protocol v4, idle-mode readaptation. **ZMQ header size changed to 1280 bytes.**
-- **[2026-03-16]** 📦 [BONES-SEED](https://huggingface.co/datasets/bones-studio/seed) open-sourced — 142K+ human motions (~288 hours) with G1 MuJoCo trajectories.
-- **[2026-02-19]** 🎉 Released GEAR-SONIC: pretrained checkpoints, C++ inference, VR teleoperation, and documentation.
-- **[2025-11-12]** 🏁 Initial release with Decoupled WBC for GR00T N1.5 and N1.6.
-
-## Table of Contents
-
-- [News](#news)
-- [GEAR-SONIC](#gear-sonic)
-- [Model Card](#model-card)
-- [VR Whole-Body Teleoperation](#vr-whole-body-teleoperation)
-- [Kinematic Planner](#kinematic-planner)
-- [SONIC Training](#sonic-training)
-- [TODOs](#todos)
-- [What's Included](#whats-included)
-  - [Setup](#setup)
-- [Documentation](#documentation)
-- [Citation](#citation)
-- [License](#license)
-- [Support](#support)
-- [MotionBricks](#motionbricks)
-- [Decoupled WBC](#decoupled-wbc)
-
-
-## GEAR-SONIC 
-
-<p style="font-size: 1.2em;">
-    <a href="https://nvlabs.github.io/GEAR-SONIC/"><strong>Website</strong></a> | 
-    <a href="https://huggingface.co/nvidia/GEAR-SONIC"><strong>Model</strong></a> | 
-    <a href="https://arxiv.org/abs/2511.07820"><strong>Paper</strong></a> | 
-    <a href="https://nvlabs.github.io/GR00T-WholeBodyControl/"><strong>Docs</strong></a>
-  </p>
-
-<div align="center">
-  <img src="docs/source/_static/sonic-preview-gif-480P.gif" width="800" >
-  
-</div>
-
-SONIC is a humanoid behavior foundation model that gives robots a core set of motor skills learned from large-scale human motion data. Rather than building separate controllers for predefined motions, SONIC uses motion tracking as a scalable training task, enabling a single unified policy to produce natural, whole-body movement and support a wide range of behaviors — from walking and crawling to teleoperation and multi-modal control. It is designed to generalize beyond the motions it has seen during training and to serve as a foundation for higher-level planning and interaction.
-
-In this repo, we release SONIC's training code, deployment framework, model checkpoints, and teleoperation stack for data collection.
-
-## Model Card
-
-SONIC provides three released Unitree G1 checkpoints. Choose the model based on its reference representation and intended deployment.
-
-### Available Models
-
-| Model | Hugging Face location | SMPL reference input | Intended use and comments |
-|---|---|---|---|
-| **Default SONIC (original release)** | Top-level `model_encoder.onnx`, `model_decoder.onnx`, and `observation_config.yaml`; training checkpoint at `sonic_release/last.pt` | 10 future frames at 20 ms spacing, approximately 200 ms of reference lookahead | Default general-purpose SONIC controller for motion tracking, planning, teleoperation, and compatibility with existing deployments. G1 and teleoperation future-reference observations use `step5`. |
-| **Low-latency teleoperation** | [`low_latency/`](https://huggingface.co/nvidia/GEAR-SONIC/tree/main/low_latency) | 4 future frames at 20 ms spacing, approximately 80 ms of reference lookahead | Intended for more responsive whole-body teleoperation and VLA execution. G1 and teleoperation future-reference observations use `step1`. Use its encoder, decoder, and observation config together. |
-| **SONIC v1.1** | [`sonic_v1_1/`](https://huggingface.co/nvidia/GEAR-SONIC/tree/main/sonic_v1_1) | 10 future frames at 20 ms spacing, approximately 200 ms of reference lookahead | Uses robot-heading-normalized target orientation and was trained with wrist-pose augmentation. Intended for heading-stable whole-body teleoperation and SONIC-backed VLA policies that use this controller. G1 and teleoperation future-reference observations use `step5`; this is not the low-latency model. |
-
-All three models use the SONIC universal-token controller, produce 64-dimensional latent motion tokens, run the controller at 50 Hz, and support SMPL pose, G1 motion reference, and teleoperation inputs. Deployment uses C++ and TensorRT; the PyTorch checkpoints support Isaac Lab evaluation and continued training.
-
-The lookahead values describe the reference horizon presented to the controller. They are **not** measurements of total end-to-end teleoperation latency, which also includes sensing, networking, preprocessing, and inference. Model weights are covered by the [NVIDIA Open Model License](LICENSE).
-
-### Released Files
-
-| Model | Deployment files | PyTorch and configuration files |
-|---|---|---|
-| Default SONIC | `model_encoder.onnx`, `model_decoder.onnx`, `observation_config.yaml` | `sonic_release/last.pt`, `sonic_release/config.yaml` |
-| Low-latency teleoperation | `low_latency/model_encoder.onnx`, `low_latency/model_decoder.onnx`, `low_latency/observation_config.yaml` | `low_latency/last.pt`, `low_latency/config.yaml`, `low_latency/model_config.yaml` |
-| SONIC v1.1 | `sonic_v1_1/model_encoder.onnx`, `sonic_v1_1/model_decoder.onnx`, `sonic_v1_1/observation_config.yaml` | `sonic_v1_1/last.pt`, `sonic_v1_1/config.yaml`, `sonic_v1_1/model_config.yaml` |
-
-### Usage
-
-Download the default model and planner:
-
-```bash
-python download_from_hf.py
-```
-
-Download the low-latency teleoperation model and planner:
-
-```bash
-python download_from_hf.py --low-latency
-```
-
-Download SONIC v1.1 and the planner:
-
-```bash
-python download_from_hf.py --sonic-v1-1
-```
-
-Run the default C++ deployment stack:
-
-```bash
-cd gear_sonic_deploy
-./deploy.sh --input-type zmq_manager real
-```
-
-Run the low-latency C++ deployment stack:
-
-```bash
-cd gear_sonic_deploy
-./deploy.sh \
-    --cp policy/low_latency/model \
-    --obs-config policy/low_latency/observation_config.yaml \
-    --input-type zmq_manager \
-    real
-```
-
-Run the SONIC v1.1 C++ deployment stack:
-
-```bash
-cd gear_sonic_deploy
-./deploy.sh \
-    --cp policy/sonic_v1_1/model \
-    --obs-config policy/sonic_v1_1/observation_config.yaml \
-    --input-type zmq_manager \
-    real
-```
-
-Run the default Python VLA launcher, which orchestrates the C++ controller and Python inference client:
-
-```bash
-python gear_sonic/scripts/launch_inference.py \
-    --camera-host 192.168.123.164 \
-    --prompt "pick up the cup"
-```
-
-For the low-latency model, add the matching deployment files:
-
-```bash
-python gear_sonic/scripts/launch_inference.py \
-    --deploy-checkpoint policy/low_latency/model \
-    --deploy-obs-config policy/low_latency/observation_config.yaml \
-    --camera-host 192.168.123.164 \
-    --prompt "pick up the cup"
-```
-
-For SONIC v1.1, use `policy/sonic_v1_1/model` and its matching
-`policy/sonic_v1_1/observation_config.yaml` in the same launcher flags.
-
-See [Downloading Model Checkpoints](docs/source/getting_started/download_models.md#sonic-v11-checkpoint) for Python checkpoint evaluation and additional deployment options. Test in simulation before using the checkpoint on a physical robot.
-
-
-## VR Whole-Body Teleoperation
-
-SONIC supports real-time whole-body teleoperation via PICO VR headset, enabling natural human-to-robot motion transfer for data collection and interactive control.
-
-<div align="center">
-  <img src="docs/source/_static/sonic_v1_1_demo.gif" width="800" alt="SONIC v1.1 whole-body teleoperation demo">
-</div>
-
-<p align="center"><em><strong>SONIC v1.1:</strong> Whole-body teleoperation mode with expressive wrist motion and dynamic movement.</em></p>
-
-<div align="center">
-  <img src="docs/source/_static/sonic_low_latency_demo.gif" width="640" alt="SONIC Low Latency whole-body teleoperation and ground pickup">
-</div>
-
-<p align="center"><em><strong>SONIC Low Latency:</strong> Whole-body teleoperation mode with a successful ground pickup.</em></p>
-
-This repo can also drive the headset over Isaac Teleop / CloudXR by launching `gear_sonic/scripts/pico_manager_thread_server.py --input-source isaac-teleop`. The streamer hosts the CloudXR runtime in-process via `isaacteleop[cloudxr]` — no separate publisher container required. That path is currently documented and supported only for **G1 with a Thor backpack**. The Isaac Teleop bring-up steps are documented in [`docs/source/tutorials/isaac_teleop_publisher_setup.md`](docs/source/tutorials/isaac_teleop_publisher_setup.md).
-
-<div align="center">
-<table>
-<tr>
-<td align="center"><b>Walking</b></td>
-<td align="center"><b>Running</b></td>
-</tr>
-<tr>
-<td align="center"><img src="media/teleop_walking.gif" width="400"></td>
-<td align="center"><img src="media/teleop_running.gif" width="400"></td>
-</tr>
-<tr>
-<td align="center"><b>Sideways Movement</b></td>
-<td align="center"><b>Kneeling</b></td>
-</tr>
-<tr>
-<td align="center"><img src="media/teleop_sideways.gif" width="400"></td>
-<td align="center"><img src="media/teleop_kneeling.gif" width="400"></td>
-</tr>
-<tr>
-<td align="center"><b>Getting Up</b></td>
-<td align="center"><b>Jumping</b></td>
-</tr>
-<tr>
-<td align="center"><img src="media/teleop_getup.gif" width="400"></td>
-<td align="center"><img src="media/teleop_jumping.gif" width="400"></td>
-</tr>
-<tr>
-<td align="center"><b>Bimanual Manipulation</b></td>
-<td align="center"><b>Object Hand-off</b></td>
-</tr>
-<tr>
-<td align="center"><img src="media/teleop_bimanual.gif" width="400"></td>
-<td align="center"><img src="media/teleop_switch_hands.gif" width="400"></td>
-</tr>
-</table>
-</div>
-
-## Kinematic Planner
-
-SONIC includes a kinematic planner for real-time locomotion generation — choose a movement style, steer with keyboard/gamepad, and adjust speed and height on the fly.
-
-<div align="center">
-<table>
-<tr>
-<td align="center" colspan="2"><b>In-the-Wild Navigation</b></td>
-</tr>
-<tr>
-<td align="center" colspan="2"><img src="media/planner/planner_in_the_wild_navigation.gif" width="800"></td>
-</tr>
-<tr>
-<td align="center"><b>Run</b></td>
-<td align="center"><b>Happy</b></td>
-</tr>
-<tr>
-<td align="center"><img src="media/planner/planner_run.gif" width="400"></td>
-<td align="center"><img src="media/planner/planner_happy.gif" width="400"></td>
-</tr>
-<tr>
-<td align="center"><b>Stealth</b></td>
-<td align="center"><b>Injured</b></td>
-</tr>
-<tr>
-<td align="center"><img src="media/planner/planner_stealth.gif" width="400"></td>
-<td align="center"><img src="media/planner/planner_injured.gif" width="400"></td>
-</tr>
-<tr>
-<td align="center"><b>Kneeling</b></td>
-<td align="center"><b>Hand Crawling</b></td>
-</tr>
-<tr>
-<td align="center"><img src="media/planner/planner_kneeling.gif" width="400"></td>
-<td align="center"><img src="media/planner/planner_hand_crawling.gif" width="400"></td>
-</tr>
-<tr>
-<td align="center"><b>Elbow Crawling</b></td>
-<td align="center"><b>Boxing</b></td>
-</tr>
-<tr>
-<td align="center"><img src="media/planner/planner_elbow_crawling.gif" width="400"></td>
-<td align="center"><img src="media/planner/planner_boxing.gif" width="400"></td>
-</tr>
-</table>
-</div>
-
-## SONIC Training
-
-SONIC can be trained from scratch on the [Bones-SEED](https://huggingface.co/datasets/bones-studio/seed)
-motion capture dataset (142K+ motions, ~288 hours, Unitree G1 retargeted), or finetuned
-from the released checkpoint on [Hugging Face](https://huggingface.co/nvidia/GEAR-SONIC).
-
-### Quick start
-
-```bash
-# Install training dependencies (Isaac Lab must be installed separately — see docs)
-pip install -e "gear_sonic/[training]"
-
-# Download checkpoint + SMPL data from Hugging Face
-pip install huggingface_hub
-python download_from_hf.py --training
-
-# Download Bones-SEED G1 CSVs from huggingface.co/datasets/bones-studio/seed, then convert and filter
-python gear_sonic/data_process/convert_soma_csv_to_motion_lib.py \
-    --input /path/to/bones_seed/g1/csv/ \
-    --output data/motion_lib_bones_seed/robot --fps 30 --fps_source 120 --individual --num_workers 16
-python gear_sonic/data_process/filter_and_copy_bones_data.py \
-    --source data/motion_lib_bones_seed/robot --dest data/motion_lib_bones_seed/robot_filtered
-
-# Finetune from released checkpoint (64+ GPUs recommended)
-accelerate launch --num_processes=8 gear_sonic/train_agent_trl.py \
-    +exp=manager/universal_token/all_modes/sonic_release \
-    +checkpoint=sonic_release/last.pt \
-    num_envs=4096 headless=True \
-    ++manager_env.commands.motion.motion_lib_cfg.motion_file=data/motion_lib_bones_seed/robot_filtered \
-    ++manager_env.commands.motion.motion_lib_cfg.smpl_motion_file=data/smpl_filtered
-```
-
-For the full guide including multi-node training, evaluation, ONNX export, and SOMA encoder setup:
-📖 [Installation (Training)](https://nvlabs.github.io/GR00T-WholeBodyControl/getting_started/installation_training.html) |
-[Training Guide](https://nvlabs.github.io/GR00T-WholeBodyControl/user_guide/training.html)
-
-
-## TODOs
-
-- [x] Release pretrained SONIC policy checkpoints
-- [x] Open source C++ inference stack
-- [x] Setup documentation
-- [x] Open source teleoperation stack and demonstration scripts
-- [x] Release training scripts and recipes for motion imitation and fine-tuning
-- [x] Open source large-scale data collection workflows and fine-tuning VLA scripts. 
-- [x] Publish additional preprocessed large-scale human motion datasets
-
-
-
-## What's Included
-
-This release includes:
-
-- **`gear_sonic_deploy`**: C++ inference stack for deploying SONIC policies on real hardware
-- **`gear_sonic`**: Full SONIC training stack — PPO training, data processing pipeline, and configuration system for training on Bones-SEED and custom motion datasets
-- **`motionbricks`**: Preview release of the MotionBricks real-time latent generative stack — interactive G1 demo, pretrained checkpoints, synthetic training code, and motion-representation docs
-
-### Setup
-
-> **Git LFS required.** This repo contains large binary assets (meshes, ONNX
-> models). Without Git LFS, you will get small pointer files instead of actual
-> data, causing silent failures. Install Git LFS first if you don't have it:
-> `sudo apt install git-lfs && git lfs install`
->
-> MotionBricks pretrained checkpoints are skipped by default to avoid an extra
-> ~2.2 GiB download during normal monorepo setup. MotionBricks GIFs and meshes
-> still download normally. Fetch the checkpoints explicitly if you plan to run
-> the MotionBricks demo.
-
-```bash
-git clone https://github.com/NVlabs/GR00T-WholeBodyControl.git
-cd GR00T-WholeBodyControl
-git lfs pull
-
-# Optional: fetch MotionBricks pretrained checkpoints.
-git lfs pull --include="motionbricks/out/**" --exclude=""
-
-# Verify your environment
-python check_environment.py
-```
-
-### Which environment do I need?
-
-| I want to... | Environment | How to install |
-|---|---|---|
-| **Train / finetune SONIC** | Isaac Lab's Python env | [Install Isaac Lab](https://isaac-sim.github.io/IsaacLab/main/source/setup/installation/index.html), then `pip install -e "gear_sonic/[training]"` |
-| **Run MuJoCo simulation** | `.venv_sim` (auto-created) | `bash install_scripts/install_mujoco_sim.sh` |
-| **VR teleoperation** | `.venv_teleop` (auto-created) | `bash install_scripts/install_pico.sh` |
-| **Collect data** | `.venv_data_collection` (auto-created) | `bash install_scripts/install_data_collection.sh` |
-| **Deploy on real robot** | C++ build | See [deployment docs](https://nvlabs.github.io/GR00T-WholeBodyControl/getting_started/installation_deploy.html) |
-
-Each use case has its own lightweight environment. The install scripts use `uv`
-and create isolated venvs automatically — you don't need to manage them manually.
-Training is the only one that requires Isaac Lab (installed separately).
+`--full-reference` runs every reference frame even after a detected fall, but
+the result remains failed and the process exits non-zero. For a short smoke
+test, replace `--full-reference` with `--max-sim-seconds 4`.
+
+Always keep the reference motion, model, metrics and video in an artifact store
+whose access policy matches their provenance; do not add them to this repository.
+
+## Important limitations
+
+- This fork adapts the public SONIC tracker/controller training path, not the
+  unreleased planner-training pipeline. The public planner artifact remains
+  tied to the G1 interface.
+- `gear_sonic_deploy`, Unitree DDS/C++, VLA/teleoperation and the legacy
+  `run_sim_loop.py` path remain G1-specific. They must not command Kengo.
+- Internal keys such as `g1`, `g1_dyn` and `g1_kin` are retained only as the
+  state-dict ABI of existing Kengo checkpoints. Renaming them without a state
+  translation breaks checkpoint compatibility.
+- Passing asset validation or sim2sim proves structural simulator usability;
+  it does not approve hardware operation.
+- Kengo sim2real still requires an independently reviewed 23-motor transport
+  and safety adapter covering index/sign/unit/zero mapping, limits, watchdog,
+  emergency stop, fall handling, command arbitration and communication loss.
+
+## Project map
+
+| Path | Purpose |
+|---|---|
+| `gear_sonic/config/exp/manager/universal_token/all_modes/sonic_kengo.yaml` | Kengo experiment configuration |
+| `gear_sonic/utils/kengo_contract.py` | Joint, body, observation and action contract |
+| `gear_sonic/data_process/convert_kengo_npz_to_motion_lib.py` | Deterministic conversion, filtering and manifest generation |
+| `gear_sonic/scripts/launch_kengo_training.sh` | Validated eight-GPU launcher |
+| `gear_sonic/scripts/backup_best_checkpoints.py` | Space-bounded hourly best-checkpoint selection |
+| `gear_sonic/scripts/export_kengo_onnx.sh` | Combined Kengo policy export |
+| `gear_sonic/scripts/run_kengo_sonic_sim2sim.py` | Dedicated MuJoCo sim2sim and recorder |
+| `gear_sonic/tests/` | Contract, conversion, export, backup and sim2sim tests |
 
 ## Documentation
 
-📚 **[Full Documentation](https://nvlabs.github.io/GR00T-WholeBodyControl/)**
+- [Kengo training handoff](KENGO_TRAINING.md)
+- [Asset, artifact and sim2real boundary](KENGO_ASSET_BOUNDARY.md)
+- [Contribution policy](CONTRIBUTING.md)
+- [NVIDIA upstream documentation](https://nvlabs.github.io/GR00T-WholeBodyControl/)
+- [GEAR-SONIC project page](https://nvlabs.github.io/GEAR-SONIC/)
+- [GEAR-SONIC model page](https://huggingface.co/nvidia/GEAR-SONIC)
+- [SONIC paper](https://arxiv.org/abs/2511.07820)
 
-### Getting Started
-- [Installation Guide](https://nvlabs.github.io/GR00T-WholeBodyControl/getting_started/installation_deploy.html)
-- [Quick Start](https://nvlabs.github.io/GR00T-WholeBodyControl/getting_started/quickstart.html)
-- [VR Teleoperation Setup](https://nvlabs.github.io/GR00T-WholeBodyControl/getting_started/vr_teleop_setup.html)
+## Upstream, license and citation
 
-### Tutorials
-- [Keyboard Control](https://nvlabs.github.io/GR00T-WholeBodyControl/tutorials/keyboard.html)
-- [Gamepad Control](https://nvlabs.github.io/GR00T-WholeBodyControl/tutorials/gamepad.html)
-- [ZMQ Communication](https://nvlabs.github.io/GR00T-WholeBodyControl/tutorials/zmq.html)
-- [ZMQ Manager / PICO VR](https://nvlabs.github.io/GR00T-WholeBodyControl/tutorials/vr_wholebody_teleop.html)
+This repository is a public GitHub fork of
+[`NVlabs/GR00T-WholeBodyControl`](https://github.com/NVlabs/GR00T-WholeBodyControl).
+The Kengo adaptation started from upstream revision
+`a0732b642c0333077e127a2f56ab0014c196bca4`. It is not an official NVIDIA or
+Galaxea release.
 
-### Training
-- [Installation (Training)](https://nvlabs.github.io/GR00T-WholeBodyControl/getting_started/installation_training.html)
-- [Training Guide](https://nvlabs.github.io/GR00T-WholeBodyControl/user_guide/training.html)
-- [Training Data](https://nvlabs.github.io/GR00T-WholeBodyControl/user_guide/training_data.html)
+Repository source code remains under Apache License 2.0. NVIDIA-distributed
+upstream model weights are governed by the NVIDIA Open Model License. The
+private Kengo assets, Kengo motion data and Kengo-derived models are separate
+materials and are **not** automatically licensed by either parent-repository
+statement. Review [LICENSE](LICENSE), [`legal/`](legal/) and the asset boundary
+before use or distribution.
 
-### Best Practices
-- [Teleoperation](https://nvlabs.github.io/GR00T-WholeBodyControl/user_guide/teleoperation.html)
-
-
-
-
-
-
----
-
-## Citation
-
-If you use GEAR-SONIC in your research, please cite:
+If you use SONIC in research, cite the upstream work:
 
 ```bibtex
 @article{luo2025sonic,
-    title={SONIC: Supersizing Motion Tracking for Natural Humanoid Whole-Body Control},
-    author={Luo, Zhengyi and Yuan, Ye and Wang, Tingwu and Li, Chenran and Chen, Sirui and Casta\~neda, Fernando and Cao, Zi-Ang and Li, Jiefeng and Minor, David and Ben, Qingwei and Da, Xingye and Ding, Runyu and Hogg, Cyrus and Song, Lina and Lim, Edy and Jeong, Eugene and He, Tairan and Xue, Haoru and Xiao, Wenli and Wang, Zi and Yuen, Simon and Kautz, Jan and Chang, Yan and Iqbal, Umar and Fan, Linxi and Zhu, Yuke},
-    journal={arXiv preprint arXiv:2511.07820},
-    year={2025}
+  title   = {SONIC: Supersizing Motion Tracking for Natural Humanoid Whole-Body Control},
+  author  = {Luo, Zhengyi and Yuan, Ye and Wang, Tingwu and Li, Chenran and Chen, Sirui and Castaneda, Fernando and Cao, Zi-Ang and Li, Jiefeng and Minor, David and Ben, Qingwei and Da, Xingye and Ding, Runyu and Hogg, Cyrus and Song, Lina and Lim, Edy and Jeong, Eugene and He, Tairan and Xue, Haoru and Xiao, Wenli and Wang, Zi and Yuen, Simon and Kautz, Jan and Chang, Yan and Iqbal, Umar and Fan, Linxi and Zhu, Yuke},
+  journal = {arXiv preprint arXiv:2511.07820},
+  year    = {2025}
 }
 ```
 
----
-
-## License
-
-This project uses dual licensing:
-
-- **Source Code**: Licensed under Apache License 2.0 - applies to all code, scripts, and software components in this repository
-- **Model Weights**: Licensed under NVIDIA Open Model License - applies to all trained model checkpoints and weights
-
-The private Kengo asset submodule, Kengo motion data, and Kengo-derived models
-are separate materials and are not licensed by those parent-repository
-statements automatically. See [KENGO_ASSET_BOUNDARY.md](KENGO_ASSET_BOUNDARY.md).
-
-See [LICENSE](LICENSE) for the complete dual-license text.
-
-Please review both licenses before using this project. The NVIDIA Open Model License permits commercial use with attribution and requires compliance with NVIDIA's Trustworthy AI terms.
-
-All required legal documents, including the Apache 2.0 license, 3rd-party attributions, and DCO language, are consolidated in the /legal folder of this repository.
-
----
-
-## Support
-
-For questions and issues, please contact the GEAR WBC team at [gear-wbc@nvidia.com](mailto:gear-wbc@nvidia.com) to provide feedback! 
-
-## MotionBricks
-
-<p style="font-size: 1.2em;">
-  <a href="https://nvlabs.github.io/motionbricks/"><strong>Project page</strong></a> |
-  <a href="motionbricks/README.md"><strong>Subproject README</strong></a>
-</p>
-
-<div align="center">
-  <img src="motionbricks/assets/gifs/teaser_animation.gif" width="400">
-  <img src="motionbricks/assets/gifs/teaser_robotics.gif" width="400">
-</div>
-
-MotionBricks is a real-time generative framework that transforms interactive motion control for animation and robotics. It combines a large-scale latent backbone with intuitive "smart primitives" to deliver high-quality, zero-shot motion synthesis at 15,000 FPS — complementing the tracking-based GEAR-SONIC controllers in this repo.
-
-This preview release ships an interactive G1 demo (keyboard-driven, MuJoCo viewer), pretrained checkpoints (VQVAE · pose · root), a synthetic training pipeline, and motion-representation docs. Its pretrained checkpoints are opt-in for monorepo clones; run `git lfs pull --include="motionbricks/out/**" --exclude=""` from the repo root before using the demo. A full release — fully embedded in the GEAR-SONIC pipeline — is targeted for approximately one month out. See [`motionbricks/README.md`](motionbricks/README.md) for setup, demo, and training instructions.
-
-## Decoupled WBC
-
-For the Decoupled WBC used in GR00T N1.5 and N1.6 models, please refer to the [Decoupled WBC documentation](docs/source/references/decoupled_wbc.md).
-
-
-## Acknowledgments
-We would like to acknowledge the following projects from which parts of the code in this repo are derived from:
-- [Beyond Mimic](https://github.com/HybridRobotics/whole_body_tracking)
-- [Isaac Lab](https://github.com/isaac-sim/IsaacLab)
+Upstream components also build on
+[BeyondMimic](https://github.com/HybridRobotics/whole_body_tracking) and
+[Isaac Lab](https://github.com/isaac-sim/IsaacLab). Use this repository's issue
+tracker for Kengo-specific changes; reproduce upstream-only issues against the
+NVIDIA repository before reporting them upstream.
