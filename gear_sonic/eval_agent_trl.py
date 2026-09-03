@@ -54,6 +54,7 @@ from gear_sonic.trl.utils import common as trl_utils_common
 from gear_sonic.trl.utils import scheduler
 from gear_sonic.utils import common as rl_utils_common
 from gear_sonic.utils import config_utils, obs_utils
+from gear_sonic.utils.export_contract import combined_policy_onnx_name
 
 config_utils.register_rl_resolvers()
 
@@ -499,50 +500,69 @@ def main(override_config: omegaconf.OmegaConf):
 
         if "tokenizer" in example_obs_dict and has_encoders:
 
-            inference_helpers.export_universal_token_module_as_onnx(
-                model.policy.actor_module,
-                encoder_name="smpl",
-                decoder_name="g1_dyn",
-                path=exported_policy_path,
-                exported_model_name=exported_onnx_name.replace(".onnx", "_smpl.onnx"),
-                batch_size=1,
+            # ``g1`` and ``g1_dyn`` are legacy universal-token module keys
+            # embedded in existing state_dicts, including Kengo step 7400.
+            # They identify the robot-motion modality, not the embodiment.
+            # Keep those ABI keys while naming the public artifact after the
+            # configured physical robot.
+            robot_type = str(config.manager_env.config.robot.type)
+            robot_encoder_name = str(config.get("robot_encoder_abi_name", "g1"))
+            robot_decoder_name = str(config.get("robot_decoder_abi_name", "g1_dyn"))
+            primary_onnx_name = combined_policy_onnx_name(
+                exported_onnx_name, config.get("export_embodiment", robot_type)
             )
+
             inference_helpers.export_universal_token_module_as_onnx(
                 model.policy.actor_module,
-                encoder_name="g1",
-                decoder_name="g1_dyn",
+                encoder_name=robot_encoder_name,
+                decoder_name=robot_decoder_name,
                 path=exported_policy_path,
-                exported_model_name=exported_onnx_name.replace(".onnx", "_g1.onnx"),
-                batch_size=1,
-            )
-            inference_helpers.export_universal_token_module_as_onnx(
-                model.policy.actor_module,
-                encoder_name="teleop",
-                decoder_name="g1_dyn",
-                path=exported_policy_path,
-                exported_model_name=exported_onnx_name.replace(".onnx", "_teleop.onnx"),
+                exported_model_name=primary_onnx_name,
                 batch_size=1,
             )
 
-            inference_helpers.export_universal_token_encoders_as_onnx(
-                model.policy.actor_module,
-                path=exported_policy_path,
-                exported_model_name=exported_onnx_name.replace(".onnx", "_encoder.onnx"),
-                batch_size=1,
-            )
-            inference_helpers.export_universal_token_decoder_as_onnx(
-                model.policy.actor_module,
-                decoder_name="g1_dyn",
-                path=exported_policy_path,
-                exported_model_name=exported_onnx_name.replace(".onnx", "_decoder.onnx"),
-                batch_size=1,
-            )
-            print(  # noqa: T201
-                f'Exported encoders ONNX to {os.path.join(exported_policy_path, exported_onnx_name.replace(".onnx", "_encoder.onnx"))}'  # noqa: E501
-            )
-            print(  # noqa: T201
-                f'Exported decoder ONNX to {os.path.join(exported_policy_path, exported_onnx_name.replace(".onnx", "_decoder.onnx"))}'  # noqa: E501
-            )
+            if config.get("export_primary_onnx_only", False):
+                logger.info(
+                    f"Exported primary {robot_type} policy ONNX only: "
+                    f"{os.path.join(exported_policy_path, primary_onnx_name)}"
+                )
+            else:
+                inference_helpers.export_universal_token_module_as_onnx(
+                    model.policy.actor_module,
+                    encoder_name="smpl",
+                    decoder_name=robot_decoder_name,
+                    path=exported_policy_path,
+                    exported_model_name=exported_onnx_name.replace(".onnx", "_smpl.onnx"),
+                    batch_size=1,
+                )
+                inference_helpers.export_universal_token_module_as_onnx(
+                    model.policy.actor_module,
+                    encoder_name="teleop",
+                    decoder_name=robot_decoder_name,
+                    path=exported_policy_path,
+                    exported_model_name=exported_onnx_name.replace(".onnx", "_teleop.onnx"),
+                    batch_size=1,
+                )
+
+                inference_helpers.export_universal_token_encoders_as_onnx(
+                    model.policy.actor_module,
+                    path=exported_policy_path,
+                    exported_model_name=exported_onnx_name.replace(".onnx", "_encoder.onnx"),
+                    batch_size=1,
+                )
+                inference_helpers.export_universal_token_decoder_as_onnx(
+                    model.policy.actor_module,
+                    decoder_name=robot_decoder_name,
+                    path=exported_policy_path,
+                    exported_model_name=exported_onnx_name.replace(".onnx", "_decoder.onnx"),
+                    batch_size=1,
+                )
+                print(  # noqa: T201
+                    f'Exported encoders ONNX to {os.path.join(exported_policy_path, exported_onnx_name.replace(".onnx", "_encoder.onnx"))}'  # noqa: E501
+                )
+                print(  # noqa: T201
+                    f'Exported decoder ONNX to {os.path.join(exported_policy_path, exported_onnx_name.replace(".onnx", "_decoder.onnx"))}'  # noqa: E501
+                )
 
         else:
             inference_helpers.export_policy_as_onnx(

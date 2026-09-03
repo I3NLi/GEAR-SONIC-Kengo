@@ -359,7 +359,9 @@ class MotionLibBase:
         self.randomize_wrist_prob = self.m_cfg.get("randomize_wrist_prob", 0.3)
         self.randomize_wrist_std = self.m_cfg.get("randomize_wrist_std", 0.1)
         # MuJoCo DOF indices for wrist joints (L/R roll/pitch/yaw)
-        self.wrist_mujoco_dof_indices = [19, 20, 21, 26, 27, 28]
+        self.wrist_mujoco_dof_indices = list(
+            self.m_cfg.get("wrist_mujoco_dof_indices", [19, 20, 21, 26, 27, 28])
+        )
 
     def load_data(self, motion_file):
         if osp.isfile(motion_file):

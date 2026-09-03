@@ -9,6 +9,7 @@ Usage:
     python check_environment.py --deploy     # Deployment checks only
 """
 
+import argparse
 import importlib
 import os
 import platform
@@ -46,15 +47,29 @@ def check_python(training=False):
         )
 
 
-def check_git_lfs():
+def check_git_lfs(robot_type="kengo"):
     lfs_installed = shutil.which("git-lfs") is not None
     if not lfs_installed:
         return check("Git LFS", False, msg_fail="not installed (sudo apt install git-lfs)")
 
-    # Check if LFS files are pulled (sample an actual LFS-tracked mesh file)
-    mesh_path = "gear_sonic/data/assets/robot_description/urdf/g1/meshes"
-    stl_files = [os.path.join(mesh_path, f) for f in os.listdir(mesh_path) if f.endswith(".STL")] if os.path.isdir(mesh_path) else []
-    sample_file = stl_files[0] if stl_files else "decoupled_wbc/sim2mujoco/resources/robots/g1/policy/GR00T-WholeBodyControl-Balance.onnx"
+    if robot_type == "kengo":
+        return check(
+            "Git LFS",
+            True,
+            msg_pass="installed; private Kengo submodule deliberately uses regular Git",
+        )
+
+    mesh_path = "gear_sonic/data/assets/robot_description/meshes/g1"
+    stl_files = (
+        [
+            os.path.join(mesh_path, filename)
+            for filename in os.listdir(mesh_path)
+            if filename.endswith(".STL")
+        ]
+        if os.path.isdir(mesh_path)
+        else []
+    )
+    sample_file = stl_files[0] if stl_files else ""
     if os.path.exists(sample_file):
         size = os.path.getsize(sample_file)
         if size < 1000:
@@ -65,6 +80,34 @@ def check_git_lfs():
             )
         return check("Git LFS", True, msg_pass="installed, files pulled")
     return check("Git LFS", True, msg_pass="installed")
+
+
+def check_kengo_assets():
+    asset_root = os.path.join(
+        "external_dependencies", "kengo_robot_description"
+    )
+    validator = os.path.join(asset_root, "scripts", "validate_assets.py")
+    if not os.path.isfile(validator):
+        return check(
+            "Kengo asset submodule",
+            False,
+            msg_fail=(
+                "not initialized (run 'git submodule update --init --recursive "
+                "external_dependencies/kengo_robot_description')"
+            ),
+        )
+    result = subprocess.run(
+        [sys.executable, validator],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return check(
+        "Kengo asset submodule",
+        result.returncode == 0,
+        msg_pass="private bundle initialized and validated",
+        msg_fail=(result.stderr or result.stdout).strip(),
+    )
 
 
 def check_cuda():
@@ -168,8 +211,7 @@ def check_tensorrt():
 
 
 def check_disk_space():
-    stat = os.statvfs(".")
-    free_gb = (stat.f_bavail * stat.f_frsize) / (1024**3)
+    free_gb = shutil.disk_usage(".").free / (1024**3)
     ok = free_gb > 10
     return check(
         "Disk space",
@@ -180,13 +222,15 @@ def check_disk_space():
 
 
 def main():
-    mode = "all"
-    if "--training" in sys.argv:
-        mode = "training"
-    elif "--deploy" in sys.argv:
-        mode = "deploy"
+    parser = argparse.ArgumentParser(description="GEAR-SONIC environment pre-flight checks")
+    mode_group = parser.add_mutually_exclusive_group()
+    mode_group.add_argument("--training", action="store_true")
+    mode_group.add_argument("--deploy", action="store_true")
+    parser.add_argument("--robot", choices=("kengo", "g1"), default="kengo")
+    args = parser.parse_args()
+    mode = "training" if args.training else "deploy" if args.deploy else "all"
 
-    print(f"GR00T-WholeBodyControl Environment Check")
+    print(f"GEAR-SONIC {args.robot} Environment Check")
     print(f"Platform: {platform.system()} {platform.machine()}")
     print(f"Python:   {sys.executable}")
     print()
@@ -196,7 +240,9 @@ def main():
     # Basic checks (always run)
     print("Basic:")
     all_pass &= check_python(training=(mode in ("all", "training")))
-    all_pass &= check_git_lfs()
+    all_pass &= check_git_lfs(args.robot)
+    if args.robot == "kengo":
+        all_pass &= check_kengo_assets()
     all_pass &= check_cuda()
     all_pass &= check_torch()
     all_pass &= check_disk_space()

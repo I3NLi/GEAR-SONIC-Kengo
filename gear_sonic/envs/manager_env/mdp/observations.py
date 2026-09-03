@@ -28,43 +28,6 @@ from isaaclab.managers import ObservationGroupCfg as ObsGroup
 from isaaclab.managers import SceneEntityCfg
 from isaaclab.utils import configclass
 
-# Joint ordering constants (Mujoco order for compatibility)
-G1_MUJOCO_ORDER = [
-    "left_hip_pitch_joint",
-    "left_hip_roll_joint",
-    "left_hip_yaw_joint",
-    "left_knee_joint",
-    "left_ankle_pitch_joint",
-    "left_ankle_roll_joint",
-    "right_hip_pitch_joint",
-    "right_hip_roll_joint",
-    "right_hip_yaw_joint",
-    "right_knee_joint",
-    "right_ankle_pitch_joint",
-    "right_ankle_roll_joint",
-    "waist_yaw_joint",
-    "waist_roll_joint",
-    "waist_pitch_joint",
-    "left_shoulder_pitch_joint",
-    "left_shoulder_roll_joint",
-    "left_shoulder_yaw_joint",
-    "left_elbow_joint",
-    "left_wrist_roll_joint",
-    "left_wrist_pitch_joint",
-    "left_wrist_yaw_joint",
-    "right_shoulder_pitch_joint",
-    "right_shoulder_roll_joint",
-    "right_shoulder_yaw_joint",
-    "right_elbow_joint",
-    "right_wrist_roll_joint",
-    "right_wrist_pitch_joint",
-    "right_wrist_yaw_joint",
-]
-
-# Index mappings for 29 DOF
-isaaclab_to_mujoco_dof = [joint_utils.G1_ISAACLab_ORDER.index(i) for i in G1_MUJOCO_ORDER]
-mujoco_to_isaaclab = [G1_MUJOCO_ORDER.index(i) for i in joint_utils.G1_ISAACLab_ORDER]
-
 
 @configclass
 class PolicyCfg(ObsGroup):
@@ -339,7 +302,7 @@ class PrivilegedCfg(ObsGroup):
     # Staged training
     task_stage = None
 
-    # g1 token obs
+    # Robot-motion token observations (legacy universal-token ``g1`` ABI key)
     ref_root_pos_future_b = None
     ref_root_ori_future_b = None
     diff_body_pos_future_local = None
@@ -1541,7 +1504,10 @@ def joint_pos_multi_future_select_joints(
 
 
 def joint_pos_multi_future_select_joints_for_smpl(
-    env: ManagerBasedEnv, command_name: str, joints_idx: list
+    env: ManagerBasedEnv,
+    command_name: str,
+    joints_idx: list,
+    pad_to: int | None = None,
 ) -> torch.Tensor:
     """Extract reference joint positions for selected joints across SMPL-aligned future frames.
 
@@ -1551,6 +1517,8 @@ def joint_pos_multi_future_select_joints_for_smpl(
     Args:
         command_name: Name of the tracking command term.
         joints_idx: Indices of joints to select.
+        pad_to: Optional final joint dimension.  Robots with fewer wrist DoFs
+            can zero-pad to the six values expected by the released tokenizer.
 
     Returns:
         torch.Tensor: Selected joint positions,
@@ -1561,11 +1529,21 @@ def joint_pos_multi_future_select_joints_for_smpl(
     # Flatten case: (num_envs, num_future_frames * num_joints)
     joint_pos_reshaped = joint_pos.view(env.num_envs, command.smpl_num_future_frames, -1)
     joint_pos_selected = joint_pos_reshaped[..., joints_idx]
+    if pad_to is not None:
+        if pad_to < len(joints_idx):
+            raise ValueError(f"pad_to={pad_to} is smaller than {len(joints_idx)} selected joints")
+        if pad_to > len(joints_idx):
+            joint_pos_selected = torch.nn.functional.pad(
+                joint_pos_selected, (0, pad_to - len(joints_idx))
+            )
     return joint_pos_selected
 
 
 def joint_pos_multi_future_select_joints_for_smpl(  # noqa: F811
-    env: ManagerBasedEnv, command_name: str, joints_idx: list
+    env: ManagerBasedEnv,
+    command_name: str,
+    joints_idx: list,
+    pad_to: int | None = None,
 ) -> torch.Tensor:
     """Extract reference joint positions for selected joints across SMPL-aligned future frames.
 
@@ -1575,6 +1553,8 @@ def joint_pos_multi_future_select_joints_for_smpl(  # noqa: F811
     Args:
         command_name: Name of the tracking command term.
         joints_idx: Indices of joints to select.
+        pad_to: Optional final joint dimension.  Robots with fewer wrist DoFs
+            can zero-pad to the six values expected by the released tokenizer.
 
     Returns:
         torch.Tensor: Selected joint positions,
@@ -1585,6 +1565,13 @@ def joint_pos_multi_future_select_joints_for_smpl(  # noqa: F811
     # Flatten case: (num_envs, num_future_frames * num_joints)
     joint_pos_reshaped = joint_pos.view(env.num_envs, command.smpl_num_future_frames, -1)
     joint_pos_selected = joint_pos_reshaped[..., joints_idx]
+    if pad_to is not None:
+        if pad_to < len(joints_idx):
+            raise ValueError(f"pad_to={pad_to} is smaller than {len(joints_idx)} selected joints")
+        if pad_to > len(joints_idx):
+            joint_pos_selected = torch.nn.functional.pad(
+                joint_pos_selected, (0, pad_to - len(joints_idx))
+            )
     return joint_pos_selected
 
 

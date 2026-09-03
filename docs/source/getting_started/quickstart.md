@@ -86,6 +86,23 @@ Videos are written to `/tmp/sonic_renders`. For full-dataset evaluation and expe
 
 For testing in a MuJoCo simulator, run the simulation loop and deployment script in separate terminals.
 
+```{important}
+The two-process simulator and C++ deployment instructions in this section are
+for the upstream Unitree G1 stack.  For the 23-DoF Kengo fork, run the combined
+ONNX directly after initializing the authorized private robot-asset submodule:
+
+`git submodule update --init --recursive external_dependencies/kengo_robot_description`
+
+`python gear_sonic/scripts/stage_kengo_assets.py`
+
+`python gear_sonic/scripts/run_kengo_sonic_sim2sim.py --policy /path/to/model_step_<step>_kengo.onnx --headless --no-real-time --max-sim-seconds 4`
+
+Do not run `gear_sonic_deploy` against Kengo hardware; it contains G1 DDS and
+29-motor mappings. The private asset access, data/model separation, and
+sim2real safety rules are defined in the
+[Kengo asset boundary](../../../KENGO_ASSET_BOUNDARY.md).
+```
+
 ```{note}
 The MuJoCo simulator (Terminal 1) runs on the **host** in a Python virtual environment — it is **not** inside the Docker container. The deployment binary (Terminal 2) can run either natively on the host or inside the Docker container. If you are using Docker, run Terminal 1 on the host and Terminal 2 inside the container.
 ```

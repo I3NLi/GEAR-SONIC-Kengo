@@ -11,6 +11,103 @@ from transformers import TrainerCallback
 import wandb
 
 
+def _resolve_imitation_metric_body_subsets(body_names, vr_3point_body_names=None):
+    """Resolve the tracked-body subsets used by imitation evaluation metrics.
+
+    The original evaluator used Unitree G1 body names directly.  G1 and H2 use
+    ``*_wrist_yaw_link`` and ``pelvis``, while Kengo exposes the corresponding
+    tracked bodies as ``*_wrist_roll_link`` and ``pelvis_link``.  Prefer the
+    command's configured VR bodies when available, then fall back to semantic
+    matches in the tracked motion body list.  The returned ordering matches the
+    historical G1 metric ordering.
+    """
+
+    available = tuple(body_names)
+    if len(set(available)) != len(available):
+        raise ValueError("Imitation metric body_names must be unique")
+    available_set = set(available)
+    configured_vr = tuple(vr_3point_body_names or ())
+
+    def resolve_semantic(role, predicate, preferred=()):
+        configured_matches = [
+            name for name in configured_vr if name in available_set and predicate(name)
+        ]
+        if len(configured_matches) == 1:
+            return configured_matches[0]
+        if len(configured_matches) > 1:
+            raise ValueError(
+                f"Ambiguous configured bodies for imitation metric role {role!r}: "
+                f"{configured_matches}"
+            )
+
+        for name in preferred:
+            if name in available_set:
+                return name
+
+        matches = [name for name in available if predicate(name)]
+        if len(matches) == 1:
+            return matches[0]
+        detail = "no match" if not matches else f"ambiguous matches {matches}"
+        raise ValueError(
+            f"Cannot resolve imitation metric role {role!r}: {detail}; "
+            f"available bodies={list(available)}"
+        )
+
+    def require(name):
+        if name not in available_set:
+            raise ValueError(
+                f"Missing body {name!r} required for imitation metrics; "
+                f"available bodies={list(available)}"
+            )
+        return name
+
+    torso = resolve_semantic(
+        "torso",
+        lambda name: "torso" in name.casefold(),
+        preferred=("torso_link", "torso"),
+    )
+    left_wrist = resolve_semantic(
+        "left_wrist",
+        lambda name: name.casefold().startswith("left_")
+        and "wrist" in name.casefold(),
+        preferred=("left_wrist_yaw_link", "left_wrist_roll_link"),
+    )
+    right_wrist = resolve_semantic(
+        "right_wrist",
+        lambda name: name.casefold().startswith("right_")
+        and "wrist" in name.casefold(),
+        preferred=("right_wrist_yaw_link", "right_wrist_roll_link"),
+    )
+    pelvis = resolve_semantic(
+        "pelvis",
+        lambda name: "pelvis" in name.casefold(),
+        preferred=("pelvis", "pelvis_link"),
+    )
+
+    return {
+        "legs": (
+            require("left_hip_roll_link"),
+            require("left_knee_link"),
+            require("left_ankle_roll_link"),
+            require("right_hip_roll_link"),
+            require("right_knee_link"),
+            require("right_ankle_roll_link"),
+        ),
+        "vr_3points": (torso, left_wrist, right_wrist),
+        "other_upper_bodies": (
+            pelvis,
+            require("left_shoulder_roll_link"),
+            require("left_elbow_link"),
+            require("right_shoulder_roll_link"),
+            require("right_elbow_link"),
+        ),
+        "feet": (
+            require("left_ankle_roll_link"),
+            require("right_ankle_roll_link"),
+        ),
+    }
+
+
 def create_html_table(metrics_dict):
     """
     Create a sortable HTML table for metrics logging using DataTables.
@@ -544,31 +641,21 @@ class ImEvalCallback(TrainerCallback):
                 ]
                 """
 
-                # Define subsets
-                # 6 + 3 + 5 = 14
-                legs_subset_names = [
-                    "left_hip_roll_link",
-                    "left_knee_link",
-                    "left_ankle_roll_link",
-                    "right_hip_roll_link",
-                    "right_knee_link",
-                    "right_ankle_roll_link",
+                command_cfg = getattr(self.env.motion_command, "cfg", None)
+                configured_vr_bodies = (
+                    getattr(command_cfg, "vr_3point_body", None)
+                    if command_cfg is not None
+                    else None
+                )
+                metric_body_subsets = _resolve_imitation_metric_body_subsets(
+                    body_names, configured_vr_bodies
+                )
+                legs_subset_names = metric_body_subsets["legs"]
+                vr_3points_subset_names = metric_body_subsets["vr_3points"]
+                other_upper_bodies_subset_names = metric_body_subsets[
+                    "other_upper_bodies"
                 ]
-                # NOTE use torso_link instead of head for vr_3points_subset_names
-                vr_3points_subset_names = [
-                    "torso_link",
-                    "left_wrist_yaw_link",
-                    "right_wrist_yaw_link",
-                ]
-                other_upper_bodies_subset_names = [
-                    "pelvis",
-                    "left_shoulder_roll_link",
-                    "left_elbow_link",
-                    "right_shoulder_roll_link",
-                    "right_elbow_link",
-                ]
-
-                foot_subset_names = ["left_ankle_roll_link", "right_ankle_roll_link"]
+                foot_subset_names = metric_body_subsets["feet"]
 
                 # Get indices for subsets
                 legs_indices = [body_names.index(name) for name in legs_subset_names]

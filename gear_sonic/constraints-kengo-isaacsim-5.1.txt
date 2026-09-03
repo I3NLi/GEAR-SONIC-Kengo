@@ -1,0 +1,4 @@
+# Isaac Sim 5.1 kernel packages require these exact runtime versions.
+numpy==1.26.0
+click==8.1.7
+psutil==5.9.8

@@ -16,7 +16,7 @@ import joblib
 import pxr
 
 from gear_sonic.envs.manager_env.mdp import terrain
-from gear_sonic.envs.manager_env.robots import g1, h2
+from gear_sonic.envs.manager_env.robots import g1, h2, kengo
 from gear_sonic.trl.utils import common
 
 
@@ -390,7 +390,11 @@ class MySceneCfg(InteractiveSceneCfg):
         )
 
         # Check if robot has hands (43 DOF robots) - used for hand-related sensors
-        robot_type = config.get("robot", {}).get("type", "g1")
+        robot_type = config.get("robot", {}).get("type")
+        if not robot_type:
+            raise ValueError(
+                "manager_env.config.robot.type must explicitly select an embodiment"
+            )
         robot_has_hands = "43dof" in robot_type or "hand" in robot_type
 
         motion_meta_info_path = config.get("motion_meta_info_path", None)
@@ -1006,16 +1010,25 @@ class ModularTrackingEnvCfg(ManagerBasedRLEnvCfg):
                 "action_scale": h2.H2_ACTION_SCALE,
                 "isaaclab_to_mujoco_mapping": h2.H2_ISAACLAB_TO_MUJOCO_MAPPING,
             },
+            "kengo": {
+                "robot_cfg": kengo.KENGO_CFG,
+                "action_scale": kengo.KENGO_ACTION_SCALE,
+                "isaaclab_to_mujoco_mapping": kengo.KENGO_ISAACLAB_TO_MUJOCO_MAPPING,
+            },
         }
 
-        robot_type = config["robot"].get("type", "g1")
+        robot_type = config.get("robot", {}).get("type")
+        if robot_type not in robot_mapping:
+            raise ValueError(
+                f"Unsupported or missing robot type {robot_type!r}; "
+                f"choose one of {sorted(robot_mapping)}"
+            )
+        self.robot_type = robot_type
         self.scene.robot = robot_mapping[robot_type]["robot_cfg"].replace(
             prim_path="{ENV_REGEX_NS}/Robot"
         )
-        self.actions.joint_pos.scale = robot_mapping[config["robot"].get("type", "g1")][
-            "action_scale"
-        ]
-        self.isaaclab_to_mujoco_mapping = robot_mapping[config["robot"].get("type", "g1")][
+        self.actions.joint_pos.scale = robot_mapping[robot_type]["action_scale"]
+        self.isaaclab_to_mujoco_mapping = robot_mapping[robot_type][
             "isaaclab_to_mujoco_mapping"
         ]
 

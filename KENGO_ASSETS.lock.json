@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "submodule_path": "external_dependencies/kengo_robot_description",
+  "repository": "git@github.com:I3NLi/kengo-robot-assets.git",
+  "tag": "kengo-with-fist-v1.0.0",
+  "commit": "6772bd3e8db9ad89cc3ee17c2dbbff7fe9f52771",
+  "asset_contract": "ASSET_CONTRACT.json",
+  "asset_contract_sha256": "ea4b82c356afda68bd964f4b3e9a06bd51c0cdb81e462485172814f9498bcc80",
+  "asset_id": "galaxea-kengo-with-fist",
+  "actuated_joint_count": 23,
+  "mesh_count": 27,
+  "classification": "restricted",
+  "redistributable": false
+}

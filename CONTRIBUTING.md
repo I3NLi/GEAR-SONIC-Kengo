@@ -34,6 +34,14 @@ for setting up the training environment.
 For questions, open a [GitHub Discussion](https://github.com/NVlabs/GR00T-WholeBodyControl/issues)
 or contact [gear-wbc@nvidia.com](mailto:gear-wbc@nvidia.com).
 
+## Restricted Kengo material
+
+Do not add Kengo URDF/MJCF/STL files, motion datasets, quality reports, filtered
+PKL files, checkpoints, ONNX exports, internal videos/logs, or credentials to a
+parent-repository commit or public pull request. Kengo robot assets are pinned
+through the private submodule only. Contributors must have the right to submit
+every file they add and must follow [KENGO_ASSET_BOUNDARY.md](KENGO_ASSET_BOUNDARY.md).
+
 ## License
 
 By contributing, you agree that your contributions will be licensed under the

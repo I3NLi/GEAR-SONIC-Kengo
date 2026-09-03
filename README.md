@@ -29,6 +29,48 @@ This is the codebase for the **GR00T Whole-Body Control (WBC)** projects. It hos
 - **GEAR-SONIC Series**: our latest iteration of generalist humanoid whole-body controllers (see our [whitepaper](https://nvlabs.github.io/GEAR-SONIC/));
 - **MotionBricks**: a real-time latent generative model for interactive motion control in animation and robotics (see the [project page](https://nvlabs.github.io/motionbricks/)).
 
+## Kengo fork quick path
+
+This checkout adds a 23-DoF Galaxea Kengo SONIC training, export, and MuJoCo
+sim2sim path.  Kengo is selected explicitly by
+`manager/universal_token/all_modes/sonic_kengo`; the upstream Unitree G1/H2
+assets and examples remain available as separate compatibility branches.
+
+Kengo robot descriptions are not stored in this parent repository. Authorized
+users must initialize the exact private asset commit pinned as a submodule:
+
+```bash
+git submodule sync --recursive
+git submodule update --init --recursive \
+  external_dependencies/kengo_robot_description
+python gear_sonic/scripts/stage_kengo_assets.py
+```
+
+The asset source carries a `Do Not distribute` restriction. Keep the submodule
+private and do not expose it through public forks, releases, packages, or CI
+artifacts. See [KENGO_ASSET_BOUNDARY.md](KENGO_ASSET_BOUNDARY.md) for repository,
+data/model, licensing, update, and sim2real boundaries.
+
+```bash
+# Train on all configured GPUs using the filtered, redirected Kengo motions.
+./gear_sonic/scripts/launch_kengo_training.sh 4096 100000 full8gpu_sonic_filtered
+
+# Export exactly one combined policy.  The output is *_kengo.onnx.
+./gear_sonic/scripts/export_kengo_onnx.sh /path/to/best_so_far.pt
+
+# Run the combined policy locally in the dedicated Kengo MuJoCo bridge.
+python gear_sonic/scripts/run_kengo_sonic_sim2sim.py \
+  --policy /path/to/model_step_<step>_kengo.onnx \
+  --headless --no-real-time --max-sim-seconds 4
+```
+
+The older `gear_sonic_deploy`, Unitree DDS, VLA/teleoperation, and
+`run_sim_loop.py` paths below are upstream G1-specific implementations.  They
+must not be used to command Kengo hardware: a real Kengo deployment still
+requires its 23-motor transport and safety adapter.  The dedicated Kengo
+sim2sim script does not import those components.  See [KENGO_TRAINING.md](KENGO_TRAINING.md)
+for the validated data and training contract.
+
 ## News
 
 - **[2026-07-23]** **SONIC v1.1 checkpoint** — released a robot-heading-normalized SONIC controller trained with wrist-pose augmentation for whole-body teleoperation and SONIC-backed VLA execution. See the [Model Card](#model-card) and [Download Models](https://nvlabs.github.io/GR00T-WholeBodyControl/getting_started/download_models.html#sonic-v11-checkpoint).
@@ -425,6 +467,10 @@ This project uses dual licensing:
 
 - **Source Code**: Licensed under Apache License 2.0 - applies to all code, scripts, and software components in this repository
 - **Model Weights**: Licensed under NVIDIA Open Model License - applies to all trained model checkpoints and weights
+
+The private Kengo asset submodule, Kengo motion data, and Kengo-derived models
+are separate materials and are not licensed by those parent-repository
+statements automatically. See [KENGO_ASSET_BOUNDARY.md](KENGO_ASSET_BOUNDARY.md).
 
 See [LICENSE](LICENSE) for the complete dual-license text.
 

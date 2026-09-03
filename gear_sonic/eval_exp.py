@@ -87,13 +87,13 @@ class CheckpointEvaluator:
                 with open(config_path) as f:
                     train_config = yaml.safe_load(f)
                 wandb_cfg = train_config.get("wandb", {})
-                self.wandb_project = train_config.get("project_name", "TRL_G1_Track")
+                self.wandb_project = train_config.get("project_name", "TRL_Track")
                 self.wandb_entity = wandb_cfg.get("wandb_entity", None)
             except Exception as e:  # noqa: BLE001
                 logger.warning(f"Could not load training config for wandb: {e}")
 
         if self.wandb_project is None:
-            self.wandb_project = "TRL_G1_Track"
+            self.wandb_project = "TRL_Track"
         if self.wandb_entity is None:
             self.wandb_entity = None  # uses wandb default entity
 

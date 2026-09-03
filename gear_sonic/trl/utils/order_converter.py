@@ -21,6 +21,8 @@ class IsaacLabMuJoCoConverter(ABC):
 
     ROOT_QPOS_OFFSET = 7  # root_trans(3) + root_quat(4)
     DOF_MAPPINGS: dict = {}  # Must be overridden by subclasses
+    BODY_MAPPINGS: dict = {}  # Must be overridden by subclasses
+    JOINT_NAMES: list[str] = []
     VALID_DOF_ORDERS = ("mujoco", "isaaclab")
 
     def convert(self, data: torch.Tensor, from_order: str, to_order: str) -> torch.Tensor:
@@ -92,6 +94,33 @@ class IsaacLabMuJoCoConverter(ABC):
     def num_dof(self) -> int:
         """Number of actuated DOFs (excluding root)."""
         return len(self.DOF_MAPPINGS[(self.VALID_DOF_ORDERS[0], self.VALID_DOF_ORDERS[1])])
+
+    @property
+    def isaaclab_to_mujoco_dof(self):
+        return self.DOF_MAPPINGS[("isaaclab", "mujoco")]
+
+    @property
+    def mujoco_to_isaaclab_dof(self):
+        return self.DOF_MAPPINGS[("mujoco", "isaaclab")]
+
+    @property
+    def isaaclab_to_mujoco_body(self):
+        return self.BODY_MAPPINGS[("isaaclab", "mujoco")]
+
+    @property
+    def mujoco_to_isaaclab_body(self):
+        return self.BODY_MAPPINGS[("mujoco", "isaaclab")]
+
+    def get_isaaclab_to_mujoco_mapping(self):
+        """Return the mapping dictionary consumed by ``TrackingCommand``."""
+
+        return {
+            "isaaclab_joints": self.JOINT_NAMES,
+            "isaaclab_to_mujoco_dof": self.isaaclab_to_mujoco_dof,
+            "mujoco_to_isaaclab_dof": self.mujoco_to_isaaclab_dof,
+            "isaaclab_to_mujoco_body": self.isaaclab_to_mujoco_body,
+            "mujoco_to_isaaclab_body": self.mujoco_to_isaaclab_body,
+        }
 
 
 class G1Converter(IsaacLabMuJoCoConverter):
@@ -200,6 +229,59 @@ class H2Converter(IsaacLabMuJoCoConverter):
 
     VR_3POINTS_BODY_NAMES = ["torso_link", "left_wrist_pitch_link", "right_wrist_pitch_link"]
     FOOT_BODY_NAMES = ["left_ankle_roll_link", "right_ankle_roll_link"]
+
+
+class KengoConverter(IsaacLabMuJoCoConverter):
+    """Kengo 23-DoF joint/body ordering converter."""
+
+    def __init__(self):
+        from gear_sonic.utils.kengo_contract import (
+            KENGO_ISAACLAB_BODY_NAMES,
+            KENGO_ISAACLAB_TO_MUJOCO_BODY,
+            KENGO_ISAACLAB_TO_MUJOCO_DOF,
+            KENGO_LOWER_JOINT_INDICES_MUJOCO,
+            KENGO_MUJOCO_TO_ISAACLAB_BODY,
+            KENGO_MUJOCO_TO_ISAACLAB_DOF,
+            KENGO_WRIST_JOINT_INDICES_MUJOCO,
+        )
+
+        self.JOINT_NAMES = KENGO_ISAACLAB_BODY_NAMES
+        self.DOF_MAPPINGS = {
+            ("isaaclab", "mujoco"): KENGO_ISAACLAB_TO_MUJOCO_DOF,
+            ("mujoco", "isaaclab"): KENGO_MUJOCO_TO_ISAACLAB_DOF,
+        }
+        self.BODY_MAPPINGS = {
+            ("isaaclab", "mujoco"): KENGO_ISAACLAB_TO_MUJOCO_BODY,
+            ("mujoco", "isaaclab"): KENGO_MUJOCO_TO_ISAACLAB_BODY,
+        }
+        self.lower_joint_indices_mujoco = KENGO_LOWER_JOINT_INDICES_MUJOCO
+        self.wrist_mujoco_dof_indices = KENGO_WRIST_JOINT_INDICES_MUJOCO
+
+    VR_3POINTS_BODY_NAMES = ["torso_link", "left_wrist_roll_link", "right_wrist_roll_link"]
+    FOOT_BODY_NAMES = ["left_ankle_roll_link", "right_ankle_roll_link"]
+
+    def get_isaaclab_to_mujoco_mapping(self):
+        mapping = super().get_isaaclab_to_mujoco_mapping()
+        mapping.update(
+            {
+                "lower_joint_indices_mujoco": self.lower_joint_indices_mujoco,
+                "wrist_mujoco_dof_indices": self.wrist_mujoco_dof_indices,
+            }
+        )
+        return mapping
+
+
+def get_converter(robot_type: str) -> IsaacLabMuJoCoConverter:
+    """Construct an order converter from a Hydra robot type."""
+
+    normalized = robot_type.lower()
+    if normalized in {"g1", "g1_model_12_dex", "unitree_g1"}:
+        return G1Converter()
+    if normalized in {"h2", "unitree_h2"}:
+        return H2Converter()
+    if normalized in {"kengo", "galaxea_kengo"}:
+        return KengoConverter()
+    raise ValueError(f"Unsupported robot type for order conversion: {robot_type!r}")
 
 
 def load_qpos_from_csv(csv_path: str) -> torch.Tensor:

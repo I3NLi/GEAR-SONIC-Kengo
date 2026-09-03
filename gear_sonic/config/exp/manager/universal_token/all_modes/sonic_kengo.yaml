@@ -1,0 +1,193 @@
+# @package _global_
+# SONIC tracker/controller for the 23-DoF Galaxea Kengo embodiment.
+# Train from scratch: released G1 checkpoints have incompatible body/action dimensions.
+
+defaults:
+  - /algo: ppo_im_phc
+  - /manager_env: base_env
+  - /callbacks/read_eval
+  - /callbacks/im_resample
+  # This upstream config name is part of the current checkpoint schema.  Its
+  # tensor dimensions are resolved from the 23-DoF Kengo observations below.
+  - /aux_losses: universal_token/g1_recon_and_all_latent
+  - override /trainer: trl_ppo_aux
+  - override /actor_critic: universal_token/all_mlp_v1
+  - override /manager_env/observations/tokenizer: unitoken_all_noz
+  - override /manager_env/observations/policy: local_dir_hist
+  - override /manager_env/observations/critic: privileged_mf_hist
+  - override /manager_env/events: tracking/level0_4
+  - override /manager_env/terminations: tracking/base_adaptive_strict_ori_foot_xyz
+  - override /manager_env/rewards: tracking/base_5point_local_feet_acc
+
+use_manager_env: true
+
+# Export one deployable combined policy named ``*_kengo.onnx``.  The legacy
+# internal module keys remain ``g1``/``g1_dyn`` so existing Kengo checkpoints
+# keep strict state-dict compatibility; they do not select a G1 robot model.
+export_primary_onnx_only: true
+export_embodiment: kengo
+robot_encoder_abi_name: g1
+robot_decoder_abi_name: g1_dyn
+
+exp_base: ${hydra:runtime.choices.exp}
+exp_var: train
+experiment_name: ${exp_base}_${exp_var}
+experiment_dir: ${base_dir}/${project_name}/${experiment_name}-${timestamp}
+
+# Verified on the target 8x RTX 4090 host (about 15.9 GiB peak per GPU).
+num_envs: 4096
+project_name: TRL_Kengo_Track
+checkpoint: null
+auto_load_latest: false
+
+actor_prop_history_length: 10
+actor_actions_history_length: 10
+critic_prop_history_length: 10
+critic_actions_history_length: 10
+
+manager_env:
+  config:
+    robot:
+      type: kengo
+    # Start on flat ground for embodiment bring-up.  Full runs can override
+    # this to ``trimesh`` after the reference replay and DDP smoke tests pass.
+    terrain_type: plane
+
+  commands:
+    motion:
+      # The Kengo free/root body is torso_link.  MotionLib requires the root
+      # to be the first member of this selected-body list.
+      anchor_body: "torso_link"
+      body_names:
+        - "torso_link"
+        - "left_hip_roll_link"
+        - "left_knee_link"
+        - "left_ankle_roll_link"
+        - "right_hip_roll_link"
+        - "right_knee_link"
+        - "right_ankle_roll_link"
+        - "pelvis_link"
+        - "left_shoulder_roll_link"
+        - "left_elbow_link"
+        - "left_wrist_roll_link"
+        - "right_shoulder_roll_link"
+        - "right_elbow_link"
+        - "right_wrist_roll_link"
+      vr_3point_body:
+        - "left_wrist_roll_link"
+        - "right_wrist_roll_link"
+        - "torso_link"
+      vr_3point_body_offset:
+        - [0.15, -0.018, 0.0]
+        - [0.15, 0.018, 0.0]
+        - [0.0, 0.0, 0.454]
+      reward_point_body:
+        - "torso_link"
+        - "left_wrist_roll_link"
+        - "right_wrist_roll_link"
+      reward_point_body_offset:
+        - [0.0, 0.0, 0.454]
+        - [0.0, 0.0, 0.0]
+        - [0.0, 0.0, 0.0]
+
+      debug_vis: false
+      num_future_frames: 10
+      dt_future_ref_frames: 0.1
+      smpl_num_future_frames: 10
+      smpl_dt_future_ref_frames: 0.02
+      cat_upper_body_poses: false
+      cat_upper_body_poses_prob: 0.0
+      freeze_frame_aug: true
+      teleop_sample_prob_when_smpl: 0.5
+      randomize_wrist_poses: false
+
+      motion_lib_cfg:
+        robot_type: kengo
+        target_fps: 50
+        multi_thread: true
+        anchor_body_idx_full: 0
+        lower_joint_indices_mujoco: [11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22]
+        wrist_mujoco_dof_indices: [4, 9]
+        upper_body_augment_prefixes: []
+        adaptive_sampling:
+          adp_samp_failure_rate_max_over_mean: 200
+        # The converter intentionally writes one aggregate joblib dictionary.
+        # Point to the file itself; directory mode treats each PKL as one clip.
+        motion_file: data/kengo_motion_lib/robot_filtered/kengo_sonic_filtered.pkl
+        smpl_motion_file: dummy
+        smpl_y_up: true
+        asset:
+          assetRoot: "external_dependencies/kengo_robot_description/xml/"
+          assetFileName: "kengo_with_fist.xml"
+          urdfFileName: ""
+
+  observations:
+    tokenizer:
+      joint_pos_multi_future_wrist_for_smpl:
+        params:
+          # Isaac Lab order: Kengo has one roll DoF per wrist.  Preserve the
+          # six-value tokenizer interface with deterministic zero padding.
+          joints_idx: [15, 16]
+          pad_to: 6
+
+  events:
+    randomize_rigid_body_mass:
+      params:
+        asset_cfg:
+          body_names: ".*wrist_roll.*|torso_link"
+
+  terminations:
+    ee_body_pos:
+      params:
+        body_names:
+          - "left_ankle_roll_link"
+          - "right_ankle_roll_link"
+          - "left_wrist_roll_link"
+          - "right_wrist_roll_link"
+
+  rewards:
+    feet_acc:
+      weight: -2.5e-6
+    anti_shake_ang_vel:
+      params:
+        body_names: ["left_wrist_roll_link", "right_wrist_roll_link", "torso_link"]
+    undesired_contacts:
+      params:
+        sensor_cfg:
+          body_names:
+            - "^(?!left_ankle_roll_link$)(?!right_ankle_roll_link$)(?!left_wrist_roll_link$)(?!right_wrist_roll_link$)(?!left_elbow_link$)(?!right_elbow_link$).+$"
+
+algo:
+  config:
+    empty_cache_every_n_ppo_epoch: -1
+    num_steps_per_env: 24
+    use_clampped_std: true
+    std_clamp_min: 0.001
+    std_clamp_max: 0.5
+    max_grad_norm: 0.1
+    actor:
+      backbone:
+        reencode_smpl_g1_recon: true
+        encoders:
+          g1:
+            inputs: ["command_multi_future_nonflat", "motion_anchor_ori_b_mf_nonflat"]
+          teleop:
+            inputs:
+              - "command_multi_future_lower_body"
+              - "vr_3point_local_target"
+              - "vr_3point_local_orn_target"
+              - "motion_anchor_ori_b"
+          smpl:
+            inputs:
+              - "smpl_joints_multi_future_local_nonflat"
+              - "smpl_root_ori_b_multi_future"
+              - "joint_pos_multi_future_wrist_for_smpl"
+        decoders:
+          g1_kin:
+            outputs: ["command_multi_future_nonflat", "motion_anchor_ori_b_mf_nonflat"]
+
+    critic:
+      backbone:
+        module_config_dict:
+          layer_config:
+            hidden_dims: [2048, 2048, 1024, 1024, 512, 512]

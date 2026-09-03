@@ -63,7 +63,8 @@ config:
 
   action_clip_value: 20.0
   robot:
-    type: "g1"
+    # Every experiment must select its physical embodiment explicitly.
+    type: null
     algo_obs_dim_dict: {}
   rewards:
     num_critics: 1

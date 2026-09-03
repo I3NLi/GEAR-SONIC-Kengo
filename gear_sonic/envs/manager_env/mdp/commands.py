@@ -169,11 +169,17 @@ class TrackingCommand(CommandTerm):
             device=self.device,
         )
 
-        isaac_lab_joints = env.cfg.isaaclab_to_mujoco_mapping["isaaclab_joints"]
+        robot_mapping = env.cfg.isaaclab_to_mujoco_mapping
+        isaac_lab_joints = robot_mapping["isaaclab_joints"]
 
-        self.isaaclab_to_mujoco_dof = env.cfg.isaaclab_to_mujoco_mapping["isaaclab_to_mujoco_dof"]
-        self.mujoco_to_isaaclab_dof = env.cfg.isaaclab_to_mujoco_mapping["mujoco_to_isaaclab_dof"]
-        self.lower_joint_indices_mujoco = list(range(12))
+        self.isaaclab_to_mujoco_dof = robot_mapping["isaaclab_to_mujoco_dof"]
+        self.mujoco_to_isaaclab_dof = robot_mapping["mujoco_to_isaaclab_dof"]
+        self.lower_joint_indices_mujoco = list(
+            robot_mapping.get("lower_joint_indices_mujoco", range(12))
+        )
+        self.wrist_mujoco_dof_indices = list(
+            robot_mapping.get("wrist_mujoco_dof_indices", [19, 20, 21, 26, 27, 28])
+        )
         self.lower_joint_isaaclab_indices = [
             self.isaaclab_to_mujoco_dof[i] for i in self.lower_joint_indices_mujoco
         ]
@@ -186,20 +192,9 @@ class TrackingCommand(CommandTerm):
         if self.cfg.motion_lib_cfg is not None:
             motion_lib_cfg = easydict.EasyDict(self.cfg.motion_lib_cfg)
         else:
-            motion_lib_cfg = easydict.EasyDict(
-                {
-                    "motion_file": self.cfg.motion_file,
-                    "smpl_motion_file": getattr(self.cfg, "smpl_motion_file", None),
-                    "asset": {
-                        "assetRoot": "gear_sonic/data/assets/robot_description/mjcf/",
-                        "assetFileName": "g1_29dof_rev_1_0.xml",
-                        "urdfFileName": "",
-                    },
-                    "extend_config": [],
-                    "target_fps": 50,
-                    "multi_thread": True,
-                    "filter_motion_keys": self.cfg.filter_motion_keys,
-                }
+            raise ValueError(
+                "TrackingCommand requires an explicit motion_lib_cfg with "
+                "robot_type and asset; refusing to fall back to another embodiment"
             )
         # Only override filter_motion_keys if explicitly set at command level
         # (don't overwrite the value from motion_lib_cfg if it exists there)
@@ -217,6 +212,7 @@ class TrackingCommand(CommandTerm):
                 "body_indexes_data": self.body_indexes_data,
                 "filter_motion_keys": filter_keys,
                 "lower_joint_indices_mujoco": self.lower_joint_indices_mujoco,
+                "wrist_mujoco_dof_indices": self.wrist_mujoco_dof_indices,
                 "cat_upper_body_poses": self.cfg.cat_upper_body_poses,
                 "cat_upper_body_poses_prob": self.cfg.cat_upper_body_poses_prob,
                 "randomize_heading": self.cfg.randomize_heading,
@@ -613,13 +609,27 @@ class TrackingCommand(CommandTerm):
         # Inject body/DOF mapping into motion_lib_cfg so motion_lib handles
         # body reordering and xyzw→wxyz quaternion conversion at load time.
 
-        isaaclab_to_mujoco_mapping = order_converter.G1Converter().get_isaaclab_to_mujoco_mapping()
+        robot_type = motion_lib_cfg.get("robot_type")
+        if not robot_type:
+            raise ValueError(
+                "Offline TrackingCommand requires motion_lib_cfg.robot_type; "
+                "implicit embodiment fallback is unsafe"
+            )
+        isaaclab_to_mujoco_mapping = order_converter.get_converter(
+            robot_type
+        ).get_isaaclab_to_mujoco_mapping()
         motion_lib_cfg.update(
             {
                 "mujoco_to_isaaclab_body": isaaclab_to_mujoco_mapping["mujoco_to_isaaclab_body"],
                 "mujoco_to_isaaclab_dof": isaaclab_to_mujoco_mapping["mujoco_to_isaaclab_dof"],
                 "isaaclab_to_mujoco_body": isaaclab_to_mujoco_mapping["isaaclab_to_mujoco_body"],
                 "isaaclab_to_mujoco_dof": isaaclab_to_mujoco_mapping["isaaclab_to_mujoco_dof"],
+                "lower_joint_indices_mujoco": isaaclab_to_mujoco_mapping.get(
+                    "lower_joint_indices_mujoco", list(range(12))
+                ),
+                "wrist_mujoco_dof_indices": isaaclab_to_mujoco_mapping.get(
+                    "wrist_mujoco_dof_indices", [19, 20, 21, 26, 27, 28]
+                ),
             }
         )
         # body_indexes_data: same logic as __init__ — use body_names to select
@@ -669,7 +679,14 @@ class TrackingCommand(CommandTerm):
         if isaaclab_to_mujoco_mapping is not None:
             inst.isaaclab_to_mujoco_dof = isaaclab_to_mujoco_mapping["isaaclab_to_mujoco_dof"]
             inst.mujoco_to_isaaclab_dof = isaaclab_to_mujoco_mapping["mujoco_to_isaaclab_dof"]
-        inst.lower_joint_indices_mujoco = list(range(12))
+        inst.lower_joint_indices_mujoco = list(
+            isaaclab_to_mujoco_mapping.get("lower_joint_indices_mujoco", range(12))
+        )
+        inst.wrist_mujoco_dof_indices = list(
+            isaaclab_to_mujoco_mapping.get(
+                "wrist_mujoco_dof_indices", [19, 20, 21, 26, 27, 28]
+            )
+        )
         if hasattr(inst, "isaaclab_to_mujoco_dof"):
             inst.lower_joint_isaaclab_indices = [
                 inst.isaaclab_to_mujoco_dof[i] for i in inst.lower_joint_indices_mujoco
